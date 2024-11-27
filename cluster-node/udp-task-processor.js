@@ -1,6 +1,9 @@
 const dgram = require('dgram');
 const server = dgram.createSocket('udp4');
 
+// Получаем порт из аргументов командной строки или устанавливаем по умолчанию
+const port = process.argv[2] ? parseInt(process.argv[2], 10) : 41234;
+
 server.on('message', (msg, rinfo) => {
 	const trimmedMsg = msg.toString().trim(); // Удаляем лишние пробелы и символы новой строки
 	let response;
@@ -23,4 +26,4 @@ server.on('listening', () => {
 	console.log(`Server listening on ${address.address}:${address.port}`);
 });
 
-server.bind(41234); // Порт для приема UDP сообщений
+server.bind(port); // Используем порт из аргументов или по умолчанию

@@ -8,7 +8,7 @@ dotenv.config();
 
 @Injectable()
 export class ClustersService {
-	private udpPort: number = 41234; // Порт для отправки UDP сообщений
+	private udpPorts: number[] = [41234, 41235, 5000, 6000]; // Диапазон портов для проверки
 	private knownIps = ['192.168.1.100', '192.168.1.101'];
 
 	constructor() {
@@ -18,8 +18,8 @@ export class ClustersService {
 	}
 
 	async scanNetwork(): Promise<{ ip: string; port: number }[]> {
-		const knownIpPromises = this.knownIps.map(ip =>
-			this.pingUdp(ip, this.udpPort)
+		const knownIpPromises = this.knownIps.flatMap(ip =>
+			this.udpPorts.map(port => this.pingUdp(ip, port))
 		);
 		const ipRanges = this.getLocalIpRanges();
 		const networkPromises = ipRanges
@@ -30,17 +30,21 @@ export class ClustersService {
 					(_, i) => `${baseIp}.${range.firstOctet + i}`
 				);
 			})
-			.map(ip => this.pingUdp(ip, this.udpPort));
+			.flatMap(ip => this.udpPorts.map(port => this.pingUdp(ip, port)));
 
 		const results = await Promise.all([...knownIpPromises, ...networkPromises]);
-		const availableIps = results
-			.filter(ip => ip !== null)
-			.map(ip => ({ ip, port: this.udpPort }));
+		const availableIps = results.filter(result => result !== null) as {
+			ip: string;
+			port: number;
+		}[];
 
 		return availableIps;
 	}
 
-	private pingUdp(ip: string, port: number): Promise<string | null> {
+	private pingUdp(
+		ip: string,
+		port: number
+	): Promise<{ ip: string; port: number } | null> {
 		return new Promise(resolve => {
 			const socket = createSocket('udp4');
 			const message = Buffer.from('ping');
@@ -62,7 +66,7 @@ export class ClustersService {
 					if (msg.toString() === 'pong') {
 						clearTimeout(timeout);
 						socket.close();
-						resolve(ip);
+						resolve({ ip, port });
 					}
 				});
 
@@ -90,8 +94,8 @@ export class ClustersService {
 					net.address.startsWith(process.env.IP_BASIC_OCTETS ?? '192.168.1.')
 				) {
 					const block = new Netmask(net.cidr);
-					const firstOctet = parseInt(block.first.split('.').pop());
-					const lastOctet = parseInt(block.last.split('.').pop());
+					const firstOctet = parseInt(block.first.split('.').pop() ?? '0');
+					const lastOctet = parseInt(block.last.split('.').pop() ?? '255');
 					ranges.push({ base: block.base, firstOctet, lastOctet });
 				}
 			}
@@ -104,7 +108,7 @@ export class ClustersService {
 		setInterval(async () => {
 			const ips = await this.scanNetwork();
 			console.log('Debug mode: Found UDP clients:', ips);
-		}, 3000); // Вывод каждые 5 секунд
+		}, 3000); // Вывод каждые 3 секунды
 	}
 
 	async distributeTasks(
@@ -113,15 +117,20 @@ export class ClustersService {
 	): Promise<any> {
 		const socket = createSocket('udp4');
 		const results = await Promise.all(
-			ips.map(ipObj => this.sendUdpTask(socket, ipObj.ip, jsonData))
+			ips.map(ipObj => this.sendUdpTask(socket, ipObj.ip, ipObj.port, jsonData))
 		);
 		return results;
 	}
 
-	private sendUdpTask(socket, ip: string, data: any): Promise<any> {
+	private sendUdpTask(
+		socket,
+		ip: string,
+		port: number,
+		data: any
+	): Promise<any> {
 		return new Promise((resolve, reject) => {
 			const message = Buffer.from(JSON.stringify(data));
-			socket.send(message, this.udpPort, ip, err => {
+			socket.send(message, port, ip, err => {
 				if (err) {
 					return reject(err);
 				}
