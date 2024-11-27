@@ -21,7 +21,7 @@ export class ClustersGateway {
 		setInterval(async () => {
 			const clusters = await this.clustersService.scanNetwork();
 			this.broadcastClusters(clusters);
-		}, 500);
+		}, 5000); // Обновление списка кластеров каждые 5 секунд
 	}
 
 	handleConnection(client: Socket) {
@@ -34,7 +34,7 @@ export class ClustersGateway {
 		console.log(`Client disconnected: ${client.id}`);
 	}
 
-	private broadcastClusters(clusters: string[]) {
+	private broadcastClusters(clusters: { ip: string; port: number }[]) {
 		this.clients.forEach(client => {
 			client.emit('scanner', clusters);
 		});
@@ -46,18 +46,24 @@ export class ClustersGateway {
 		@ConnectedSocket() client: Socket
 	): void {
 		console.log('Received custom message:', data);
-		// Обработка сообщения и отправка ответа клиенту
 		client.emit('response', { message: 'Custom message received' });
 	}
 
-	@SubscribeMessage('calculate')
-	async handleCalculate(
-		@MessageBody() data: { ips: string[] },
+	@SubscribeMessage('uploadJson')
+	async handleUploadJson(
+		@MessageBody() data: { jsonContent: string },
 		@ConnectedSocket() client: Socket
 	): Promise<void> {
-		console.log('Received calculation request with IPs:', data.ips);
-		// Пример обработки: просто вернуть список IP-адресов обратно
-		const calculatedData = data.ips.map(ip => `Processed ${ip}`);
-		client.emit('calculationResult', { result: calculatedData });
+		console.log('Received JSON file:', data.jsonContent);
+		const jsonData = JSON.parse(data.jsonContent);
+		const clusters = await this.clustersService.scanNetwork();
+		const results = await this.clustersService.distributeTasks(
+			jsonData,
+			clusters
+		);
+		client.emit('uploadResult', {
+			message: 'JSON file processed successfully',
+			data: results
+		});
 	}
 }

@@ -1,0 +1,27 @@
+services:
+  cluster1:
+    build:
+      context: ./cluster-node
+      dockerfile: Dockerfile
+    networks:
+      lan:
+        ipv4_address: 192.168.1.100
+    ports:
+      - '41234:41234/udp'
+
+  cluster2:
+    build:
+      context: ./cluster-node
+      dockerfile: Dockerfile
+    networks:
+      lan:
+        ipv4_address: 192.168.1.101
+    ports:
+      - '41235:41234/udp'
+
+networks:
+  lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
