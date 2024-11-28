@@ -115,34 +115,64 @@ export class ClustersService {
 		jsonData: any,
 		ips: { ip: string; port: number }[]
 	): Promise<any> {
+		const points = jsonData.points;
+		const tasks = this.createTriangleTasks(points);
+	
 		const socket = createSocket('udp4');
-		const results = await Promise.all(
-			ips.map(ipObj => this.sendUdpTask(socket, ipObj.ip, ipObj.port, jsonData))
-		);
-		return results;
-	}
-
-	private sendUdpTask(
-		socket,
-		ip: string,
-		port: number,
-		data: any
-	): Promise<any> {
-		return new Promise((resolve, reject) => {
-			const message = Buffer.from(JSON.stringify(data));
-			socket.send(message, port, ip, err => {
-				if (err) {
-					return reject(err);
-				}
-
-				socket.once('message', msg => {
-					resolve(JSON.parse(msg.toString()));
-				});
-
-				socket.on('error', err => {
-					reject(err);
-				});
-			});
+		const taskPromises = [];
+	
+		tasks.forEach((task, index) => {
+			const ipObj = ips[index % ips.length];
+			console.log(`Sending task ${JSON.stringify(task)} to ${ipObj.ip}:${ipObj.port}`);
+			taskPromises.push(this.sendUdpTask(socket, ipObj.ip, ipObj.port, task));
 		});
+	
+		const results = await Promise.allSettled(taskPromises);
+		console.log('All tasks distributed');
+		results.forEach((result, index) => {
+			if (result.status === 'fulfilled') {
+				console.log(`Task ${index} result: `, result.value);
+			} else {
+				console.log(`Task ${index} failed: `, result.reason);
+			}
+		});
+		socket.close(); // Закрываем сокет после выполнения всех задач
+		return results.flatMap(result => result.status === 'fulfilled' && result.value.length > 0 ? result.value : []);
+	}
+	
+	private createTriangleTasks(points: { x: number, y: number, z: number }[]): any[] {
+		const tasks = [];
+		for (let i = 0; i < points.length; i++) {
+			for (let j = i + 1; j < points.length; j++) {
+				for (let k = j + 1; k < points.length; k++) {
+					tasks.push([points[i], points[j], points[k]]);
+				}
+			}
+		}
+		return tasks;
+	}
+	
+	private sendUdpTask(socket, ip: string, port: number, data: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+        const message = Buffer.from(JSON.stringify([data]));
+        socket.send(message, port, ip, err => {
+            if (err) {
+                return reject(err);
+            }
+
+            const messageHandler = msg => {
+                resolve(JSON.parse(msg.toString()));
+                socket.off('message', messageHandler); // Убираем слушателя после выполнения
+            };
+
+            const errorHandler = err => {
+                reject(err);
+                socket.off('error', errorHandler); // Убираем слушателя после выполнения
+            };
+
+            socket.on('message', messageHandler);
+            socket.on('error', errorHandler);
+        });
+    });
 	}
 }
