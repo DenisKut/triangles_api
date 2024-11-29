@@ -1,13 +1,10 @@
 const dgram = require('dgram');
 const server = dgram.createSocket('udp4');
-
 const port = process.argv[2] ? parseInt(process.argv[2], 10) : 41234;
-
 server.on('message', (msg, rinfo) => {
     const trimmedMsg = msg.toString().trim();
     console.log(`Received message from ${rinfo.address}:${rinfo.port}`);
     let response;
-
     if (trimmedMsg === 'ping') {
         response = 'pong';
     } else {
@@ -17,8 +14,7 @@ server.on('message', (msg, rinfo) => {
         } catch (err) {
             console.error('Error parsing message:', err);
             return;
-        }
-
+        } 
         if (!Array.isArray(tasks) || tasks.some(task => !Array.isArray(task) || task.length !== 3)) {
             console.error('Received tasks is not an array of arrays of three points');
             return;
@@ -41,8 +37,8 @@ server.on('message', (msg, rinfo) => {
         }).filter(result => result !== null);
 
         response = JSON.stringify(results);
+        console.log(`Sending response: ${response} to ${rinfo.address}:${rinfo.port}`);
     }
-
     server.send(response, rinfo.port, rinfo.address, err => {
         if (err) {
             console.error(`Error sending response to ${rinfo.address}:${rinfo.port}: ${err}`);

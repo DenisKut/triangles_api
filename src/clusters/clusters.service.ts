@@ -112,33 +112,38 @@ export class ClustersService {
 	}
 
 	async distributeTasks(
-		jsonData: any,
-		ips: { ip: string; port: number }[]
+    jsonData: any,
+    ips: { ip: string; port: number }[]
 	): Promise<any> {
-		const points = jsonData.points;
-		const tasks = this.createTriangleTasks(points);
-	
-		const socket = createSocket('udp4');
-		const taskPromises = [];
-	
-		tasks.forEach((task, index) => {
-			const ipObj = ips[index % ips.length];
-			console.log(`Sending task ${JSON.stringify(task)} to ${ipObj.ip}:${ipObj.port}`);
-			taskPromises.push(this.sendUdpTask(socket, ipObj.ip, ipObj.port, task));
-		});
-	
-		const results = await Promise.allSettled(taskPromises);
-		console.log('All tasks distributed');
-		results.forEach((result, index) => {
-			if (result.status === 'fulfilled') {
-				console.log(`Task ${index} result: `, result.value);
-			} else {
-				console.log(`Task ${index} failed: `, result.reason);
-			}
-		});
-		socket.close(); // Закрываем сокет после выполнения всех задач
-		return results.flatMap(result => result.status === 'fulfilled' && result.value.length > 0 ? result.value : []);
+    const points = jsonData.points;
+    const tasks = this.createTriangleTasks(points);
+    const socket = createSocket('udp4');
+		socket.bind(41231);
+    const taskPromises = [];
+    tasks.forEach((task, index) => {
+        const ipObj = ips[index % ips.length];
+        console.log(`Sending task ${JSON.stringify(task)} to ${ipObj.ip}:${ipObj.port}`);
+        taskPromises.push(this.sendUdpTask(socket, ipObj.ip, ipObj.port, task));
+    });
+
+		taskPromises.forEach(t => {
+			console.log(`TASK: ${JSON.stringify(t)}`)
+		})
+		
+    const results = await Promise.allSettled(taskPromises);
+    console.log('All tasks distributed');
+		console.log("============================");
+    const validResults = results
+        .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled' && result.value !== null);
+    const obtuseTriangles = validResults.map(result => result.value).flat().filter((triangle: any) => triangle !== null);
+    obtuseTriangles.forEach((triangle, index) => {
+        console.log(`Obtuse triangle ${index}:`, triangle);
+    });
+    console.log('Final obtuse triangles:', obtuseTriangles); // добавлено журналирование
+    socket.close();
+    return obtuseTriangles;
 	}
+
 	
 	private createTriangleTasks(points: { x: number, y: number, z: number }[]): any[] {
 		const tasks = [];
@@ -150,7 +155,7 @@ export class ClustersService {
 			}
 		}
 		return tasks;
-	}
+	}			
 	
 	private sendUdpTask(socket, ip: string, port: number, data: any): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -159,17 +164,17 @@ export class ClustersService {
             if (err) {
                 return reject(err);
             }
-
             const messageHandler = msg => {
-                resolve(JSON.parse(msg.toString()));
-                socket.off('message', messageHandler); // Убираем слушателя после выполнения
+                const response = JSON.parse(msg.toString());
+                console.log(`Received response from ${ip}:${port}: ${JSON.stringify(response)}`);
+                resolve(response);
+                socket.off('message', messageHandler);
             };
 
             const errorHandler = err => {
                 reject(err);
-                socket.off('error', errorHandler); // Убираем слушателя после выполнения
+                socket.off('error', errorHandler);
             };
-
             socket.on('message', messageHandler);
             socket.on('error', errorHandler);
         });
