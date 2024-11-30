@@ -67,4 +67,18 @@ export class ClustersGateway {
 			data: results
 		});
 	}
+
+	@SubscribeMessage('setClusters')
+	handleSetClusters(
+		@MessageBody() data: { clusters: { ip: string; port: number }[] },
+		@ConnectedSocket() client: Socket
+	): void {
+		if (Array.isArray(data.clusters)) {
+			this.clustersService.setClientClusters(data.clusters);
+			console.log('Client-defined clusters updated:', data.clusters);
+			client.emit('response', { message: 'Clusters updated successfully' });
+		} else {
+			client.emit('response', { message: 'Invalid cluster data' });
+		}
+	}
 }

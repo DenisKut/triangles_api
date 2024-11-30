@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { createSocket } from 'dgram';
 import * as dotenv from 'dotenv';
 import { Netmask } from 'netmask';
-import { networkInterfaces } from 'os';
+import * as os from 'os';
 
 dotenv.config();
 
@@ -14,6 +14,7 @@ export class ClustersService {
 	private nestPort: number = process.env.NEST_PORT
 		? parseInt(process.env.NEST_PORT, 10)
 		: 41231;
+	private clientClusters: { ip: string; port: number }[] = []; // Массив кластеров от клиента
 
 	constructor() {
 		if (process.env.NODE_ENV === 'debug') {
@@ -21,17 +22,22 @@ export class ClustersService {
 		}
 	}
 
+	setClientClusters(clusters: { ip: string; port: number }[]): void {
+		this.clientClusters = clusters;
+		console.log('Client clusters set:', clusters); // Лог для отладки
+	}
+
 	async scanNetwork(): Promise<{ ip: string; port: number }[]> {
 		const ipRanges = this.getLocalIpRanges();
 		const networkPromises = ipRanges
 			.flatMap(range => {
-				const baseIp = range.base.split('.').slice(0, 3).join('.');
+				const baseIp = range.base.split('.').slice(0, 3).join('.'); // Генерация IP-диапазонов
 				return Array.from(
 					{ length: range.lastOctet - range.firstOctet + 1 },
 					(_, i) => `${baseIp}.${range.firstOctet + i}`
 				);
 			})
-			.flatMap(ip => this.udpPorts.map(port => this.pingUdp(ip, port)));
+			.flatMap(ip => this.udpPorts.map(port => this.pingUdp(ip, port))); // Пинг по диапазону IP
 
 		const results = await Promise.all(networkPromises);
 		return results.filter(Boolean) as { ip: string; port: number }[];
@@ -79,15 +85,19 @@ export class ClustersService {
 		firstOctet: number;
 		lastOctet: number;
 	}[] {
-		const nets = networkInterfaces();
+		const nets = os.networkInterfaces();
 		const ranges = [];
 
 		for (const name of Object.keys(nets)) {
 			for (const net of nets[name]) {
+				// console.log(
+				// 	`Interface: ${name}, IP: ${net.address}, Internal: ${net.internal}`
+				// );
+				// Фильтруем по интерфейсу, если это Ethernet или тот интерфейс, который нам нужен
 				if (
 					net.family === 'IPv4' &&
 					!net.internal &&
-					net.address.startsWith(process.env.IP_BASIC_OCTETS ?? '192.168.1.')
+					(net.address.startsWith('192.168.1.') || name === 'Ethernet') // добавляем проверку на Ethernet интерфейс
 				) {
 					const block = new Netmask(net.cidr);
 					const firstOctet = parseInt(block.first.split('.').pop() ?? '0');
@@ -100,20 +110,20 @@ export class ClustersService {
 		return ranges;
 	}
 
-	private async debugMode() {
-		setInterval(async () => {
-			const ips = await this.scanNetwork();
-			console.log('Debug mode: Found UDP clients:', ips);
-		}, 3000);
-	}
-
 	async distributeTasks(
 		jsonData: any,
 		ips: { ip: string; port: number }[]
 	): Promise<any> {
-		if (!ips.length) {
-			console.error('No available IPs for task distribution');
-			return [];
+		// Используем клиентские кластеры, если они заданы
+		const clusters = this.clientClusters.length > 0 ? this.clientClusters : ips;
+
+		// console.log('Distribute tasks: Using clusters:', clusters); // Лог для отладки
+
+		if (this.clientClusters.length === 0) {
+			console.warn(
+				'No available IPs for task distribution, processing locally.'
+			);
+			return this.processTasksLocally(jsonData); // Обработка локально, если кластеров нет
 		}
 
 		const points = jsonData.points;
@@ -128,7 +138,8 @@ export class ClustersService {
 
 		const results: any[] = [];
 		for (const task of tasks) {
-			const { ip, port } = ips[Math.floor(Math.random() * ips.length)];
+			const { ip, port } =
+				clusters[Math.floor(Math.random() * clusters.length)];
 			try {
 				const result = await this.sendUdpTask(socket, ip, port, [task]);
 				results.push(...result);
@@ -141,9 +152,28 @@ export class ClustersService {
 		return results;
 	}
 
+	private processTasksLocally(jsonData: any): any[] {
+		// Локальная обработка задач
+		console.log('Processing tasks locally...');
+		const points = jsonData.points;
+		const tasks = this.createTriangleTasks(points);
+
+		return tasks
+			.map(task => {
+				if (
+					task.length === 3 &&
+					this.isValidTriangle(task as [any, any, any])
+				) {
+					return this.calculateTriangleProperties(task as [any, any, any]);
+				}
+				return null;
+			})
+			.filter(result => result !== null);
+	}
+
 	private createTriangleTasks(
 		points: { x: number; y: number; z: number }[]
-	): any[] {
+	): { x: number; y: number; z: number }[][] {
 		const tasks = [];
 		for (let i = 0; i < points.length; i++) {
 			for (let j = i + 1; j < points.length; j++) {
@@ -153,6 +183,40 @@ export class ClustersService {
 			}
 		}
 		return tasks;
+	}
+
+	private isValidTriangle([A, B, C]): boolean {
+		const AB = this.calculateDistance(A, B);
+		const BC = this.calculateDistance(B, C);
+		const CA = this.calculateDistance(C, A);
+		return AB + BC > CA && AB + CA > BC && BC + CA > AB;
+	}
+
+	private calculateTriangleProperties([A, B, C]) {
+		const AB = this.calculateDistance(A, B);
+		const BC = this.calculateDistance(B, C);
+		const CA = this.calculateDistance(C, A);
+
+		const angles = this.calculateAngles(AB, BC, CA);
+		const isObtuse = angles.some(angle => angle > 90);
+
+		return isObtuse ? { vertices: [A, B, C], angles } : null;
+	}
+
+	private calculateDistance(p1, p2): number {
+		return Math.sqrt(
+			Math.pow(p2.x - p1.x, 2) +
+				Math.pow(p2.y - p1.y, 2) +
+				Math.pow(p2.z - p1.z, 2)
+		);
+	}
+
+	private calculateAngles(a: number, b: number, c: number): number[] {
+		const angleA =
+			Math.acos((b ** 2 + c ** 2 - a ** 2) / (2 * b * c)) * (180 / Math.PI);
+		const angleB =
+			Math.acos((a ** 2 + c ** 2 - b ** 2) / (2 * a * c)) * (180 / Math.PI);
+		return [angleA, angleB, 180 - angleA - angleB];
 	}
 
 	private sendUdpTask(
@@ -167,27 +231,39 @@ export class ClustersService {
 
 			const timeout = setTimeout(() => {
 				console.warn(`Timeout waiting for response from ${ip}:${port}`);
-				resolve([]); // Возвращаем пустой результат при таймауте
+				resolve([]);
 			}, 2000);
 
 			socket.send(message, port, ip, err => {
 				if (err) {
-					clearTimeout(timeout); // Таймер сбрасывается в случае ошибки
+					clearTimeout(timeout);
 					console.error(`Error sending message to ${ip}:${port}`, err);
 					reject(err);
 				} else {
 					socket.once('message', msg => {
-						clearTimeout(timeout); // Таймер сбрасывается при успешном получении
+						clearTimeout(timeout);
 						try {
 							const response = JSON.parse(msg.toString());
 							resolve(response);
 						} catch {
 							console.warn(`Invalid JSON response from ${ip}:${port}`);
-							resolve([]); // Возвращаем пустой результат в случае ошибки JSON
+							resolve([]);
 						}
 					});
 				}
 			});
 		});
+	}
+
+	private async debugMode() {
+		if (this.clientClusters.length === 0) {
+			// Только если кластеры не заданы, проводим поиск
+			setInterval(async () => {
+				const ips = await this.scanNetwork();
+				console.log('Debug mode: Found UDP clients:', ips);
+			}, 3000);
+		} else {
+			console.log('Debug mode: No network scan as clusters are set');
+		}
 	}
 }

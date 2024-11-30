@@ -26,3 +26,14 @@ socket.on('scanner', data => {
 socket.on('disconnect', () => {
 	console.log('Disconnected from server');
 });
+
+socket.emit('setClusters', {
+	clusters: [
+		// { ip: '192.168.1.7', port: 41234 },
+		// { ip: '192.168.1.8', port: 41234 }
+	]
+});
+
+socket.on('response', data => {
+	console.log('Server response:', data);
+});
