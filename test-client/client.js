@@ -7,22 +7,22 @@ const serverUrl = 'http://localhost:3000'; // Укажите URL вашего с
 const socket = io(serverUrl);
 
 socket.on('connect', () => {
-  console.log('Connected to server');
-  
-  const jsonContent = fs.readFileSync(filePath, 'utf8');
-  console.log('Sending JSON content:', jsonContent);
-  socket.emit('uploadJson', { jsonContent });
+	console.log('Connected to server');
+
+	const jsonContent = fs.readFileSync(filePath, 'utf8');
+	console.log('Sending JSON content:', jsonContent);
+	socket.emit('uploadJson', { jsonContent });
 });
 
 socket.on('uploadResult', data => {
-  console.log('Received upload result:', data);
+	console.log('Received upload result:', JSON.stringify(data));
 });
 
 socket.on('scanner', data => {
-  console.log('Received IP addresses:', data);
-  // Здесь можете выполнять действия с полученными IP-адресами
+	console.log('Received IP addresses:', data);
+	// Здесь можете выполнять действия с полученными IP-адресами
 });
 
 socket.on('disconnect', () => {
-  console.log('Disconnected from server');
+	console.log('Disconnected from server');
 });

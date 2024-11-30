@@ -7,150 +7,84 @@ dotenv.config();
 const server = dgram.createSocket('udp4');
 const port = process.env.UDP_PORT ? parseInt(process.env.UDP_PORT, 10) : 41234;
 
-function getLocalIpAddress() {
-	const interfaces = os.networkInterfaces();
-	for (const name of Object.keys(interfaces)) {
-		for (const net of interfaces[name]) {
-			if (net.family === 'IPv4' && !net.internal) {
-				return net.address;
-			}
-		}
-	}
-	return 'localhost';
-}
-
-const host = getLocalIpAddress();
-
-const processMessage = (msg, rinfo) => {
+server.on('message', (msg, rinfo) => {
 	const trimmedMsg = msg.toString().trim();
 	console.log(`Received message from ${rinfo.address}:${rinfo.port}`);
 
 	if (trimmedMsg === 'ping') {
-		const response = 'pong';
-		server.send(response, rinfo.port, rinfo.address, err => {
-			if (err) {
-				console.error(
-					`Error sending response to ${rinfo.address}:${rinfo.port}: ${err}`
-				);
-			} else {
+		server.send('pong', rinfo.port, rinfo.address, err => {
+			if (!err)
 				console.log(`Ping response sent to ${rinfo.address}:${rinfo.port}`);
-			}
 		});
 	} else {
-		let tasks;
 		try {
-			tasks = JSON.parse(trimmedMsg);
-		} catch (err) {
-			console.error('Error parsing message:', err);
-			return;
-		}
-		if (
-			!Array.isArray(tasks) ||
-			tasks.some(task => !Array.isArray(task) || task.length !== 3)
-		) {
-			console.error('Received tasks is not an array of arrays of three points');
-			return;
-		}
+			const tasks = JSON.parse(trimmedMsg);
 
-		const results = tasks
-			.map(task => {
-				console.log('Processing task:', task);
-				if (task.length === 3) {
-					const valid = isValidTriangle(task);
-					console.log(
-						`Task ${JSON.stringify(task)} is ${valid ? 'valid' : 'not valid'}`
-					);
-					if (valid) {
-						const properties = calculateTriangleProperties(task);
-						console.log(`Triangle properties: ${JSON.stringify(properties)}`);
-						return properties;
-					}
-				} else {
-					console.error('Task is not a valid triangle:', task);
-					return null;
-				}
-			})
-			.filter(result => result !== null);
-
-		const response = JSON.stringify(results);
-		console.log(
-			`Sending response: ${response} to ${rinfo.address}:${rinfo.port}`
-		);
-		server.send(response, rinfo.port, rinfo.address, err => {
-			if (err) {
-				console.error(
-					`Error sending response to ${rinfo.address}:${rinfo.port}: ${err}`
-				);
-			} else {
-				console.log(`Response sent to ${rinfo.address}:${rinfo.port}`);
+			if (
+				!Array.isArray(tasks) ||
+				tasks.some(task => !Array.isArray(task) || task.length !== 3)
+			) {
+				throw new Error('Invalid task format');
 			}
-		});
+
+			const results = tasks
+				.map(task => processTask(task))
+				.filter(result => result !== null);
+
+			server.send(JSON.stringify(results), rinfo.port, rinfo.address, err => {
+				if (!err)
+					console.log(`Response sent to ${rinfo.address}:${rinfo.port}`);
+			});
+		} catch (err) {
+			console.error('Error processing message:', err.message);
+		}
 	}
-};
+});
 
-server.on('message', processMessage);
+function processTask(task) {
+	const isValid = validateTriangle(task);
+	if (!isValid) return null;
 
-function isValidTriangle(points) {
-	const [A, B, C] = points;
+	return calculateTriangleProperties(task);
+}
+
+function validateTriangle([A, B, C]) {
 	const AB = calculateDistance(A, B);
 	const BC = calculateDistance(B, C);
 	const CA = calculateDistance(C, A);
-	console.log(`Distances: AB=${AB}, BC=${BC}, CA=${CA}`);
-	const valid = AB + BC > CA && AB + CA > BC && BC + CA > AB;
-	console.log(
-		`Triangle with points ${JSON.stringify(points)} is ${valid ? 'valid' : 'invalid'}`
-	);
-	return valid;
+
+	return AB + BC > CA && AB + CA > BC && BC + CA > AB;
 }
 
-function calculateTriangleProperties(points) {
-	const [A, B, C] = points;
+function calculateTriangleProperties([A, B, C]) {
 	const AB = calculateDistance(A, B);
 	const BC = calculateDistance(B, C);
 	const CA = calculateDistance(C, A);
 
 	const angles = calculateAngles(AB, BC, CA);
-	console.log(`Angles: ${JSON.stringify(angles)}`);
-
 	const isObtuse = angles.some(angle => angle > 90);
-	console.log(`Is Obtuse: ${isObtuse}`);
 
-	if (isObtuse) {
-		const area = calculateArea(AB, BC, CA);
-		console.log(`Area: ${area}`);
-		return { vertices: points, angles, area };
-	} else {
-		return null;
-	}
+	return isObtuse ? { vertices: [A, B, C], angles } : null;
 }
 
-function calculateDistance(point1, point2) {
+function calculateDistance(p1, p2) {
 	return Math.sqrt(
-		Math.pow(point2.x - point1.x, 2) +
-			Math.pow(point2.y - point1.y, 2) +
-			Math.pow(point2.z - point1.z, 2)
+		Math.pow(p2.x - p1.x, 2) +
+			Math.pow(p2.y - p1.y, 2) +
+			Math.pow(p2.z - p1.z, 2)
 	);
 }
 
 function calculateAngles(a, b, c) {
 	const angleA =
-		Math.acos((b * b + c * c - a * a) / (2 * b * c)) * (180 / Math.PI);
+		Math.acos((b ** 2 + c ** 2 - a ** 2) / (2 * b * c)) * (180 / Math.PI);
 	const angleB =
-		Math.acos((a * a + c * c - b * b) / (2 * a * c)) * (180 / Math.PI);
-	const angleC = 180 - angleA - angleB;
-	return [angleA, angleB, angleC];
-}
-
-function calculateArea(a, b, c) {
-	const s = (a + b + c) / 2;
-	return Math.sqrt(s * (s - a) * (s - b) * (s - c));
+		Math.acos((a ** 2 + c ** 2 - b ** 2) / (2 * a * c)) * (180 / Math.PI);
+	return [angleA, angleB, 180 - angleA - angleB];
 }
 
 server.on('listening', () => {
-	const address = server.address();
-	console.log(`Server listening on ${address.address}:${address.port}`);
+	console.log(`Server listening on port ${port}`);
 });
 
-server.bind(port, host, () => {
-	console.log(`Server bound to ${host}:${port}`);
-});
+server.bind(port);

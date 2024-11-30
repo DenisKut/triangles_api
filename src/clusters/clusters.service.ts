@@ -34,13 +34,7 @@ export class ClustersService {
 			.flatMap(ip => this.udpPorts.map(port => this.pingUdp(ip, port)));
 
 		const results = await Promise.all(networkPromises);
-		const availableIps = results.filter(result => result !== null) as {
-			ip: string;
-			port: number;
-		}[];
-
-		console.log('Available IPs:', availableIps);
-		return availableIps;
+		return results.filter(Boolean) as { ip: string; port: number }[];
 	}
 
 	private pingUdp(
@@ -103,7 +97,6 @@ export class ClustersService {
 			}
 		}
 
-		console.log('Local IP ranges:', ranges);
 		return ranges;
 	}
 
@@ -124,37 +117,28 @@ export class ClustersService {
 		}
 
 		const points = jsonData.points;
-		const tasks = this.createTriangleTasks(points);
+		const tasks = this.createTriangleTasks(points).map(task => [
+			{ x: task[0].x, y: task[0].y, z: task[0].z },
+			{ x: task[1].x, y: task[1].y, z: task[1].z },
+			{ x: task[2].x, y: task[2].y, z: task[2].z }
+		]);
+
 		const socket = createSocket('udp4');
 		socket.bind(this.nestPort);
 
-		const taskPromises = [];
-		tasks.forEach((task, index) => {
-			const ipObj = ips[index % ips.length];
-			console.log(
-				`Sending task ${JSON.stringify(task)} to ${ipObj.ip}:${ipObj.port}`
-			);
-			taskPromises.push(this.sendUdpTask(socket, ipObj.ip, ipObj.port, task));
-		});
+		const results: any[] = [];
+		for (const task of tasks) {
+			const { ip, port } = ips[Math.floor(Math.random() * ips.length)];
+			try {
+				const result = await this.sendUdpTask(socket, ip, port, [task]);
+				results.push(...result);
+			} catch (err) {
+				console.error(`Error processing task for ${ip}:${port}`, err);
+			}
+		}
 
-		const results = await Promise.allSettled(taskPromises);
-		console.log('All tasks distributed');
-		console.log('Task results:', results);
-		console.log('============================');
-
-		const validResults = results.filter(
-			(result): result is PromiseFulfilledResult<any> =>
-				result.status === 'fulfilled' && result.value !== null
-		);
-		const obtuseTriangles = validResults
-			.map(result => result.value)
-			.flat()
-			.filter((triangle: any) => triangle !== null);
-		obtuseTriangles.forEach((triangle, index) => {
-			console.log(`Obtuse triangle ${index}:`, triangle);
-		});
-		console.log('Final obtuse triangles:', obtuseTriangles);
-		return obtuseTriangles;
+		socket.close();
+		return results;
 	}
 
 	private createTriangleTasks(
@@ -178,62 +162,31 @@ export class ClustersService {
 		data: any
 	): Promise<any> {
 		return new Promise((resolve, reject) => {
-			const message = Buffer.from(JSON.stringify([data]));
+			const message = Buffer.from(JSON.stringify(data));
 			console.log(`Sending message to ${ip}:${port}: ${message.toString()}`);
 
 			const timeout = setTimeout(() => {
 				console.warn(`Timeout waiting for response from ${ip}:${port}`);
-				cleanup();
-				resolve([]);
+				resolve([]); // Возвращаем пустой результат при таймауте
 			}, 2000);
-
-			const messageHandler = msg => {
-				console.log(
-					`Raw MSG received from ${ip}:${port}: ${msg.toString().trim()}`
-				);
-
-				try {
-					const response = JSON.parse(msg.toString().trim());
-					console.log(
-						`Parsed response from ${ip}:${port}: ${JSON.stringify(response)}`
-					);
-
-					if (response && Array.isArray(response) && response.length > 0) {
-						cleanup();
-						resolve(response);
-					} else {
-						console.warn(`Empty or invalid response from ${ip}:${port}`);
-						cleanup();
-						resolve([]);
-					}
-				} catch (error) {
-					console.error(`Error parsing response from ${ip}:${port}`, error);
-					cleanup();
-					resolve([]);
-				}
-			};
-
-			const errorHandler = err => {
-				console.error(`Socket error with ${ip}:${port}`, err);
-				cleanup();
-				reject(err);
-			};
-
-			const cleanup = () => {
-				clearTimeout(timeout);
-				socket.off('message', messageHandler);
-				socket.off('error', errorHandler);
-			};
 
 			socket.send(message, port, ip, err => {
 				if (err) {
+					clearTimeout(timeout); // Таймер сбрасывается в случае ошибки
 					console.error(`Error sending message to ${ip}:${port}`, err);
-					cleanup();
-					return reject(err);
+					reject(err);
+				} else {
+					socket.once('message', msg => {
+						clearTimeout(timeout); // Таймер сбрасывается при успешном получении
+						try {
+							const response = JSON.parse(msg.toString());
+							resolve(response);
+						} catch {
+							console.warn(`Invalid JSON response from ${ip}:${port}`);
+							resolve([]); // Возвращаем пустой результат в случае ошибки JSON
+						}
+					});
 				}
-				console.log(`Message successfully sent to ${ip}:${port}`);
-				socket.on('message', messageHandler);
-				socket.on('error', errorHandler);
 			});
 		});
 	}
