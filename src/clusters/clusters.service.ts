@@ -8,8 +8,12 @@ dotenv.config();
 
 @Injectable()
 export class ClustersService {
-	private udpPorts: number[] = [41234, 41235, 5000, 6000]; // Диапазон портов для проверки
-	private knownIps = ['192.168.1.100', '192.168.1.101'];
+	private udpPorts: number[] = process.env.UDP_PORTS
+		? process.env.UDP_PORTS.split(',').map(port => parseInt(port, 10))
+		: [41234, 41235, 5000, 6000];
+	private nestPort: number = process.env.NEST_PORT
+		? parseInt(process.env.NEST_PORT, 10)
+		: 41231;
 
 	constructor() {
 		if (process.env.NODE_ENV === 'debug') {
@@ -18,9 +22,6 @@ export class ClustersService {
 	}
 
 	async scanNetwork(): Promise<{ ip: string; port: number }[]> {
-		const knownIpPromises = this.knownIps.flatMap(ip =>
-			this.udpPorts.map(port => this.pingUdp(ip, port))
-		);
 		const ipRanges = this.getLocalIpRanges();
 		const networkPromises = ipRanges
 			.flatMap(range => {
@@ -32,12 +33,13 @@ export class ClustersService {
 			})
 			.flatMap(ip => this.udpPorts.map(port => this.pingUdp(ip, port)));
 
-		const results = await Promise.all([...knownIpPromises, ...networkPromises]);
+		const results = await Promise.all(networkPromises);
 		const availableIps = results.filter(result => result !== null) as {
 			ip: string;
 			port: number;
 		}[];
 
+		console.log('Available IPs:', availableIps);
 		return availableIps;
 	}
 
@@ -60,7 +62,7 @@ export class ClustersService {
 				timeout = setTimeout(() => {
 					socket.close();
 					resolve(null);
-				}, 1000); // Timeout через 1 секунду
+				}, 2000);
 
 				socket.on('message', msg => {
 					if (msg.toString() === 'pong') {
@@ -101,6 +103,7 @@ export class ClustersService {
 			}
 		}
 
+		console.log('Local IP ranges:', ranges);
 		return ranges;
 	}
 
@@ -108,44 +111,55 @@ export class ClustersService {
 		setInterval(async () => {
 			const ips = await this.scanNetwork();
 			console.log('Debug mode: Found UDP clients:', ips);
-		}, 3000); // Вывод каждые 3 секунды
+		}, 3000);
 	}
 
 	async distributeTasks(
-    jsonData: any,
-    ips: { ip: string; port: number }[]
+		jsonData: any,
+		ips: { ip: string; port: number }[]
 	): Promise<any> {
-    const points = jsonData.points;
-    const tasks = this.createTriangleTasks(points);
-    const socket = createSocket('udp4');
-		socket.bind(41231);
-    const taskPromises = [];
-    tasks.forEach((task, index) => {
-        const ipObj = ips[index % ips.length];
-        console.log(`Sending task ${JSON.stringify(task)} to ${ipObj.ip}:${ipObj.port}`);
-        taskPromises.push(this.sendUdpTask(socket, ipObj.ip, ipObj.port, task));
-    });
+		if (!ips.length) {
+			console.error('No available IPs for task distribution');
+			return [];
+		}
 
-		taskPromises.forEach(t => {
-			console.log(`TASK: ${JSON.stringify(t)}`)
-		})
-		
-    const results = await Promise.allSettled(taskPromises);
-    console.log('All tasks distributed');
-		console.log("============================");
-    const validResults = results
-        .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled' && result.value !== null);
-    const obtuseTriangles = validResults.map(result => result.value).flat().filter((triangle: any) => triangle !== null);
-    obtuseTriangles.forEach((triangle, index) => {
-        console.log(`Obtuse triangle ${index}:`, triangle);
-    });
-    console.log('Final obtuse triangles:', obtuseTriangles); // добавлено журналирование
-    socket.close();
-    return obtuseTriangles;
+		const points = jsonData.points;
+		const tasks = this.createTriangleTasks(points);
+		const socket = createSocket('udp4');
+		socket.bind(this.nestPort);
+
+		const taskPromises = [];
+		tasks.forEach((task, index) => {
+			const ipObj = ips[index % ips.length];
+			console.log(
+				`Sending task ${JSON.stringify(task)} to ${ipObj.ip}:${ipObj.port}`
+			);
+			taskPromises.push(this.sendUdpTask(socket, ipObj.ip, ipObj.port, task));
+		});
+
+		const results = await Promise.allSettled(taskPromises);
+		console.log('All tasks distributed');
+		console.log('Task results:', results);
+		console.log('============================');
+
+		const validResults = results.filter(
+			(result): result is PromiseFulfilledResult<any> =>
+				result.status === 'fulfilled' && result.value !== null
+		);
+		const obtuseTriangles = validResults
+			.map(result => result.value)
+			.flat()
+			.filter((triangle: any) => triangle !== null);
+		obtuseTriangles.forEach((triangle, index) => {
+			console.log(`Obtuse triangle ${index}:`, triangle);
+		});
+		console.log('Final obtuse triangles:', obtuseTriangles);
+		return obtuseTriangles;
 	}
 
-	
-	private createTriangleTasks(points: { x: number, y: number, z: number }[]): any[] {
+	private createTriangleTasks(
+		points: { x: number; y: number; z: number }[]
+	): any[] {
 		const tasks = [];
 		for (let i = 0; i < points.length; i++) {
 			for (let j = i + 1; j < points.length; j++) {
@@ -155,29 +169,72 @@ export class ClustersService {
 			}
 		}
 		return tasks;
-	}			
-	
-	private sendUdpTask(socket, ip: string, port: number, data: any): Promise<any> {
-    return new Promise((resolve, reject) => {
-        const message = Buffer.from(JSON.stringify([data]));
-        socket.send(message, port, ip, err => {
-            if (err) {
-                return reject(err);
-            }
-            const messageHandler = msg => {
-                const response = JSON.parse(msg.toString());
-                console.log(`Received response from ${ip}:${port}: ${JSON.stringify(response)}`);
-                resolve(response);
-                socket.off('message', messageHandler);
-            };
+	}
 
-            const errorHandler = err => {
-                reject(err);
-                socket.off('error', errorHandler);
-            };
-            socket.on('message', messageHandler);
-            socket.on('error', errorHandler);
-        });
-    });
+	private sendUdpTask(
+		socket,
+		ip: string,
+		port: number,
+		data: any
+	): Promise<any> {
+		return new Promise((resolve, reject) => {
+			const message = Buffer.from(JSON.stringify([data]));
+			console.log(`Sending message to ${ip}:${port}: ${message.toString()}`);
+
+			const timeout = setTimeout(() => {
+				console.warn(`Timeout waiting for response from ${ip}:${port}`);
+				cleanup();
+				resolve([]);
+			}, 2000);
+
+			const messageHandler = msg => {
+				console.log(
+					`Raw MSG received from ${ip}:${port}: ${msg.toString().trim()}`
+				);
+
+				try {
+					const response = JSON.parse(msg.toString().trim());
+					console.log(
+						`Parsed response from ${ip}:${port}: ${JSON.stringify(response)}`
+					);
+
+					if (response && Array.isArray(response) && response.length > 0) {
+						cleanup();
+						resolve(response);
+					} else {
+						console.warn(`Empty or invalid response from ${ip}:${port}`);
+						cleanup();
+						resolve([]);
+					}
+				} catch (error) {
+					console.error(`Error parsing response from ${ip}:${port}`, error);
+					cleanup();
+					resolve([]);
+				}
+			};
+
+			const errorHandler = err => {
+				console.error(`Socket error with ${ip}:${port}`, err);
+				cleanup();
+				reject(err);
+			};
+
+			const cleanup = () => {
+				clearTimeout(timeout);
+				socket.off('message', messageHandler);
+				socket.off('error', errorHandler);
+			};
+
+			socket.send(message, port, ip, err => {
+				if (err) {
+					console.error(`Error sending message to ${ip}:${port}`, err);
+					cleanup();
+					return reject(err);
+				}
+				console.log(`Message successfully sent to ${ip}:${port}`);
+				socket.on('message', messageHandler);
+				socket.on('error', errorHandler);
+			});
+		});
 	}
 }

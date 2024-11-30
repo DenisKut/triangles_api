@@ -51,20 +51,20 @@ export class ClustersGateway {
 
 	@SubscribeMessage('uploadJson')
 	async handleUploadJson(
-			@MessageBody() data: { jsonContent: string },
-			@ConnectedSocket() client: Socket
+		@MessageBody() data: { jsonContent: string },
+		@ConnectedSocket() client: Socket
 	): Promise<void> {
-    console.log('Received JSON file:', data.jsonContent);
-    const jsonData = JSON.parse(data.jsonContent);
-    const clusters = await this.clustersService.scanNetwork();
-    const results = await this.clustersService.distributeTasks(
-        jsonData,
-        clusters
-    );
-    console.log('Obtuse triangles:', JSON.stringify(results));
-    client.emit('uploadResult', {
-        message: 'JSON file processed successfully',
-        data: results
-    });
+		console.log('Received JSON file:', data.jsonContent);
+		const jsonData = JSON.parse(data.jsonContent);
+		const clusters = await this.clustersService.scanNetwork();
+		const results = await this.clustersService.distributeTasks(
+			jsonData,
+			clusters
+		);
+		console.log('Obtuse triangles:', JSON.stringify(results));
+		client.emit('uploadResult', {
+			message: 'JSON file processed successfully',
+			data: results
+		});
 	}
 }
