@@ -198,9 +198,10 @@ export class ClustersService {
 		const CA = this.calculateDistance(C, A);
 
 		const angles = this.calculateAngles(AB, BC, CA);
+		const area = this.calculateArea(AB, BC, CA);
 		const isObtuse = angles.some(angle => angle > 90);
 
-		return isObtuse ? { vertices: [A, B, C], angles } : null;
+		return isObtuse ? { vertices: [A, B, C], angles, area } : null;
 	}
 
 	private calculateDistance(p1, p2): number {
@@ -217,6 +218,11 @@ export class ClustersService {
 		const angleB =
 			Math.acos((a ** 2 + c ** 2 - b ** 2) / (2 * a * c)) * (180 / Math.PI);
 		return [angleA, angleB, 180 - angleA - angleB];
+	}
+
+	private calculateArea(a: number, b: number, c: number): number {
+		const s = (a + b + c) / 2;
+		return Math.sqrt(s * (s - a) * (s - b) * (s - c));
 	}
 
 	private sendUdpTask(

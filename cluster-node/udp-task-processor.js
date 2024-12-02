@@ -62,9 +62,10 @@ function calculateTriangleProperties([A, B, C]) {
 	const CA = calculateDistance(C, A);
 
 	const angles = calculateAngles(AB, BC, CA);
+	const area = calculateArea(AB, BC, CA);
 	const isObtuse = angles.some(angle => angle > 90);
 
-	return isObtuse ? { vertices: [A, B, C], angles } : null;
+	return isObtuse ? { vertices: [A, B, C], angles, area } : null;
 }
 
 function calculateDistance(p1, p2) {
@@ -81,6 +82,11 @@ function calculateAngles(a, b, c) {
 	const angleB =
 		Math.acos((a ** 2 + c ** 2 - b ** 2) / (2 * a * c)) * (180 / Math.PI);
 	return [angleA, angleB, 180 - angleA - angleB];
+}
+
+function calculateArea(a, b, c) {
+	const s = (a + b + c) / 2;
+	return Math.sqrt(s * (s - a) * (s - b) * (s - c));
 }
 
 server.on('listening', () => {

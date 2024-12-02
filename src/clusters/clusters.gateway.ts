@@ -62,10 +62,13 @@ export class ClustersGateway {
 			clusters
 		);
 		console.log('Obtuse triangles:', JSON.stringify(results));
+
 		client.emit('uploadResult', {
 			message: 'JSON file processed successfully',
 			data: results
 		});
+
+		console.log('Sent upload result to client:', client.id);
 	}
 
 	@SubscribeMessage('setClusters')
