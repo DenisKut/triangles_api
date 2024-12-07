@@ -1,11 +1,19 @@
+// Импорт необходимых модулей из @nestjs/common, dgram, dotenv, netmask, и os.
 import { Injectable } from '@nestjs/common';
 import { createSocket } from 'dgram';
 import * as dotenv from 'dotenv';
 import { Netmask } from 'netmask';
 import * as os from 'os';
 
+// dotenv.config() загружает переменные окружения из файла .env
 dotenv.config();
 
+// Объявление класса ClustersService с аннотацией @Injectable(), что позволяет инжектировать его в другие компоненты.
+// Поля:
+// udpPorts: Список UDP-портов, загруженный из переменных окружения или использующий значения по умолчанию.
+// nestPort: Порт для сервера NestJS, загруженный из переменных окружения или использующий значение по умолчанию.
+// clientClusters: Массив кластеров, заданных клиентом.
+// В конструкторе проверяется, если переменная окружения NODE_ENV имеет значение debug, запускается режим отладки.
 @Injectable()
 export class ClustersService {
 	private udpPorts: number[] = process.env.UDP_PORTS
@@ -22,11 +30,15 @@ export class ClustersService {
 		}
 	}
 
+	// Метод setClientClusters обновляет список кластеров, заданных клиентом, и выводит их в консоль для отладки
 	setClientClusters(clusters: { ip: string; port: number }[]): void {
 		this.clientClusters = clusters;
 		console.log('Client clusters set:', clusters); // Лог для отладки
 	}
 
+	// Метод scanNetwork сканирует сеть на наличие доступных кластеров.
+	// Генерирует диапазоны IP-адресов и выполняет пинг по каждому IP-адресу и порту.
+	// Возвращает список доступных кластеров
 	async scanNetwork(): Promise<{ ip: string; port: number }[]> {
 		const ipRanges = this.getLocalIpRanges();
 		const networkPromises = ipRanges
@@ -43,6 +55,8 @@ export class ClustersService {
 		return results.filter(Boolean) as { ip: string; port: number }[];
 	}
 
+	// Метод pingUdp отправляет UDP-сообщение "ping" по заданному IP-адресу и порту.
+	// Если ответ "pong" получен в течение 2 секунд, возвращает IP-адрес и порт. В противном случае возвращает null
 	private pingUdp(
 		ip: string,
 		port: number
@@ -80,6 +94,8 @@ export class ClustersService {
 		});
 	}
 
+	// Метод getLocalIpRanges получает диапазоны локальных IP-адресов для сканирования.
+	// Фильтрует интерфейсы по параметрам IPv4 и ненаблюдаемым (не внутренним)
 	private getLocalIpRanges(): {
 		base: string;
 		firstOctet: number;
@@ -97,7 +113,10 @@ export class ClustersService {
 				if (
 					net.family === 'IPv4' &&
 					!net.internal &&
-					(net.address.startsWith('192.168.1.') || name === 'Ethernet') // добавляем проверку на Ethernet интерфейс
+					(net.address.startsWith(
+						process.env.IP_BASIC_OCTETS ?? '192.168.1.'
+					) ||
+						name === 'Ethernet') // добавляем проверку на Ethernet интерфейс
 				) {
 					const block = new Netmask(net.cidr);
 					const firstOctet = parseInt(block.first.split('.').pop() ?? '0');
@@ -110,6 +129,9 @@ export class ClustersService {
 		return ranges;
 	}
 
+	// Метод distributeTasks распределяет задачи по кластерам.
+	// Если нет доступных кластеров, задачи обрабатываются локально.
+	// Задачи распределяются по кластерам с использованием UDP-сообщений и результат возвращается
 	async distributeTasks(
 		jsonData: any,
 		ips: { ip: string; port: number }[]
@@ -152,6 +174,8 @@ export class ClustersService {
 		return results;
 	}
 
+	// Метод processTasksLocally обрабатывает задачи локально, если нет доступных кластеров.
+	// Создает задачи, проверяет их валидность и вычисляет свойства треугольников
 	private processTasksLocally(jsonData: any): any[] {
 		// Локальная обработка задач
 		console.log('Processing tasks locally...');
@@ -171,6 +195,7 @@ export class ClustersService {
 			.filter(result => result !== null);
 	}
 
+	// Создание задач по всем возможным треугольникам
 	private createTriangleTasks(
 		points: { x: number; y: number; z: number }[]
 	): { x: number; y: number; z: number }[][] {
@@ -185,6 +210,7 @@ export class ClustersService {
 		return tasks;
 	}
 
+	// Методы схожие с кластерными
 	private isValidTriangle([A, B, C]): boolean {
 		const AB = this.calculateDistance(A, B);
 		const BC = this.calculateDistance(B, C);
@@ -225,6 +251,7 @@ export class ClustersService {
 		return Math.sqrt(s * (s - a) * (s - b) * (s - c));
 	}
 
+	// sendUdpTask: Метод для отправки задачи по UDP и ожидания ответа. Если ответ получен, возвращается результат.
 	private sendUdpTask(
 		socket,
 		ip: string,
@@ -261,6 +288,7 @@ export class ClustersService {
 		});
 	}
 
+	// debugMode: Метод для режима отладки. Запускает регулярное сканирование сети каждые 3 секунды, если клиентские кластеры не заданы, и логирует найденные IP-адреса.
 	private async debugMode() {
 		if (this.clientClusters.length === 0) {
 			// Только если кластеры не заданы, проводим поиск
